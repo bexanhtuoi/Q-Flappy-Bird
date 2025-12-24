@@ -15,15 +15,28 @@ from .entities import (
     WelcomeMessage,
 )
 from .utils import GameConfig, Images, Sounds, Window
-from .ANN import ANN
-from src.ANN.Multilayer import ANN2
-from .GA import GA
+
 import numpy as np
+import pandas as pd
 import time
+from .ai.q import Q
+
+Agent = Q(alpha=0.1, gamma=0.99, epsilon=0)
+Agent.Q = np.load("q.npy", allow_pickle=True)
+
+with open("episode.txt", "r") as f:
+    start_episode = int(f.read().strip())
+
+with open("max_score.txt", "r") as f:
+    max_score = int(f.read().strip())
 
 class Flappy:
     def __init__(self):
         pygame.init()
+        try:
+            pygame.mixer.init()
+        except Exception:
+            pass
         pygame.display.set_caption("Flappy Bird")
         window = Window(288, 512)
         screen = pygame.display.set_mode((window.width, window.height))
@@ -35,34 +48,43 @@ class Flappy:
             fps=30,
             window=window,
             images=images,
-            # sounds=Sounds(),
+            sounds=Sounds(),
         )
         self.font = pygame.font.SysFont(None, 24) 
         self.start_time = None
 
     async def start(self):
-        self.Population = 1000
-        self.ANN = ANN(self.Population, 6, 3, 1)
-        self.GA = GA(self.Population, 0.5)
-        self.max = 0
-        for i in range(1000):
-            self.gen = i
+        self.sumscore = 0
+        self.max = max_score
+        for ep in range(start_episode, 200000):
+            if ep % 100 == 0:
+                avg_score = self.sumscore / 100
+                print(f"Episode {ep}, Average Score: {avg_score}")
+                self.sumscore = 0
+
+            if ep % 10 == 0:
+                Agent.Q.dump("q.npy")
+                df = pd.DataFrame(Agent.Q)
+                df.to_csv("q.csv", index=False)
+                with open("episode.txt", "w") as f:
+                    f.write(str(ep))
+            Agent.epsilon = max(0, Agent.epsilon * 0.995)
+            self.episode = ep
+
             self.background = Background(self.config)
             self.floor = Floor(self.config)
-            self.players = [
-                Player(self.config, x=int(self.config.window.width * 0.2), y=int((self.config.window.height - self.config.images.player[0].get_height()) / 2))
-                for _ in range(self.Population)
-            ]
-            self.welcome_message = WelcomeMessage(self.config)
-            self.game_over_message = GameOver(self.config)
+            self.player = Player(
+                self.config,
+                x=int(self.config.window.width * 0.2),
+                y=int(self.config.window.vh * 0.5),
+            )
+            
             self.pipes = Pipes(self.config)
             self.score = Score(self.config)
-            self.start_time = pygame.time.get_ticks()
+
+            # print(f"epsilon={Agent.epsilon:.3f}")
             await self.play()
-            self.ANN.weight = self.GA.fit(self.fitness, self.ANN.weight)
-            max = np.max(self.fitness)
-            if max > self.max:
-                self.max = max
+
             
 
     def check_quit_event(self, event):
@@ -84,75 +106,122 @@ class Flappy:
         text_surface = self.font.render(text, True, (255, 255, 255))
         self.config.screen.blit(text_surface, (x, y))
 
+    def get_closest_pipe(self):
+        for pipe in self.pipes.lower:
+            if pipe.x + pipe.w > self.player.x:
+                return pipe
+        return self.pipes.lower[0]
+
+    def get_state(self):
+        pipe = self.get_closest_pipe()
+        pipe_center = pipe.y + self.pipes.pipe_gap / 2
+
+        vdiff = int(self.player.y - pipe_center)
+        dx = int(pipe.x - self.player.x)
+        vel_up = int(self.player.vel_y)
+
+        return Agent.get_state_index(vdiff, dx, vel_up)
+
+
+
+    def get_reward(self, collided, passed, diff, prev_diff):
+        if collided:
+            return -100
+        if passed:
+            return +30
+
+        r = -0.05  
+
+        if abs(diff) < abs(prev_diff):
+            r += 0.3
+
+        if abs(diff) < 20:
+            r += 1.0
+
+        return r
+
+
+
+
     async def play(self):
         self.score.reset()
-        for player in self.players:
-            player.set_mode(PlayerMode.NORMAL)
+        self.player.set_mode(PlayerMode.NORMAL)
 
-        self.fitness = np.zeros(self.Population)
+        action_interval = 1
+        action_timer = 0
+
+        s = self.get_state()
+        a = Agent.take_action(s)
+        prev_abs_diff = 9999
 
         while True:
-            self.location = np.zeros(self.Population)
-            self.speed = np.zeros(self.Population)
-            self.distance = np.zeros(self.Population)
-            self.upper = np.zeros(self.Population)
-            self.under = np.zeros(self.Population)
-            self.gap = np.zeros(self.Population)
-            
-            self.location += player.y
-            self.speed += player.vel_y
-            self.distance += self.pipes.upper[0].x
-            self.upper += self.pipes.lower[0].y + self.pipes.pipe_gap
-            self.under += self.pipes.lower[0].y
-            self.gap += (self.pipes.lower[0].y + (self.pipes.pipe_gap/ 2))
-
-            self.X = np.array([
-                self.location,
-                self.speed,
-                self.distance,
-                self.upper,
-                self.under,
-                self.gap
-            ]).T
-
-            print(self.X)
-            self.y = self.ANN.forward(self.X)
-
-            for i, pipe in enumerate(self.pipes.upper):
-                if any(player.crossed(pipe) for player in self.players):
-                    self.score.add()
-
             for event in pygame.event.get():
-                self.check_quit_event(event)
+                if event.type == QUIT or (
+                    event.type == KEYDOWN and event.key == K_ESCAPE
+                ):
+                    pygame.quit()
+                    sys.exit()
 
-            for i, player in enumerate(self.players):
-                if self.y[i] == 1:
-                    player.flap()
-                
-                survival_time = (pygame.time.get_ticks() - self.start_time) / 1000
-                self.fitness[i] = survival_time + (self.score.score * 100)
-
+            if action_timer <= 0:
+                a = Agent.take_action(s)
+                action_timer = action_interval
+                if a == 1:
+                    self.player.flap()
+                    try:
+                        self.config.sounds.wing.play()
+                    except Exception:
+                        pass
+            else:
+                action_timer -= 1
 
             self.background.tick()
-            self.floor.tick()
             self.pipes.tick()
+            self.floor.tick()
+            self.player.tick()
             self.score.tick()
 
-            for player in self.players:
-                player.tick()
-                if player.collided(self.pipes, self.floor):
-                    self.players.remove(player)
+            passed = False
+            for pipe in self.pipes.upper:
+                if self.player.crossed(pipe):
+                    self.score.add()
+                    passed = True
+                    try:
+                        self.config.sounds.point.play()
+                    except Exception:
+                        pass
 
-            self.draw_text(f"Gen: {self.gen}", 10, 10)
+            collided = self.player.collided(self.pipes, self.floor)
 
-            elapsed_time = (pygame.time.get_ticks() - self.start_time) / 1000
-            self.draw_text(f"Time: {elapsed_time:.2f}s", 10, 40)
+            pipe = self.get_closest_pipe()
+            diff = self.player.y - (pipe.y + self.pipes.pipe_gap / 2)
 
-            self.draw_text(f"Max: {self.max:.2f}", 10, 70)
+            r = self.get_reward(collided, passed, diff, prev_abs_diff)
+            prev_abs_diff = abs(diff)
 
+            s_next = self.get_state()
+            Agent.update(s, a, r, s_next)
+
+            s = s_next
+
+            if collided:
+                try:
+                    self.config.sounds.hit.play()
+                except Exception:
+                    pass
+                try:
+                    self.config.sounds.die.play()
+                except Exception:
+                    pass
+                break
+            self.draw_text(f"Episode: {self.episode}", 10, 10)
             pygame.display.update()
+            
             await asyncio.sleep(0)
             self.config.tick()
 
-            if not self.players:
-                return
+        self.sumscore += self.score.score
+        if self.score.score > self.max:
+            self.max = self.score.score
+            print(f"New max score: {self.max}")
+            with open("max_score.txt", "w") as f:
+                f.write(str(self.max))

@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Byte-compiled / optimized / DLL files
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Pygame / assets/runtime
+assets/audio/*.wav
+assets/audio/*.ogg
+assets/audio/*.mp3
+
+# Training artifacts
+q_table.npy
+q.npy
+q.csv
+episode.txt
+max_score.txt
+training_logs/
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Requirements / environment files (optional to ignore)
+# Uncomment if you don't want to track generated requirements
+# requirements.txt
+
