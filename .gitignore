@@ -47,11 +47,6 @@ assets/audio/*.ogg
 assets/audio/*.mp3
 
 # Training artifacts
-q_table.npy
-q.npy
-q.csv
-episode.txt
-max_score.txt
 training_logs/
 
 # Logs and temp
